@@ -1,0 +1,244 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BubuRemote Client</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 25px;
+            background: #171722;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+
+        .panel {
+            max-width: 420px;
+            margin: 40px auto;
+            padding: 25px;
+            background: #292938;
+            border-radius: 18px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #ff9fc8;
+        }
+
+        input {
+            width: 100%;
+            padding: 14px;
+            margin: 15px 0;
+            border: 1px solid #555;
+            border-radius: 10px;
+            background: #171722;
+            color: white;
+            font-size: 22px;
+            text-align: center;
+            letter-spacing: 5px;
+        }
+
+        button {
+            width: 100%;
+            padding: 13px;
+            margin-top: 10px;
+            border: none;
+            border-radius: 10px;
+            background: #ff75a9;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+        }
+
+        #estado {
+            margin-top: 20px;
+            color: #ffcc66;
+        }
+    </style>
+</head>
+
+<body>
+<div class="panel">
+    <h1>BubuRemote 💗</h1>
+
+    <p>Conéctate con Arnold</p>
+
+    <input
+            id="codigo"
+            type="text"
+            maxlength="6"
+            inputmode="numeric"
+            placeholder="000000"
+    >
+
+    <button id="conectar" onclick="conectar()">
+        Conectar
+    </button>
+
+    <button id="microfono" onclick="activarMicrofono()" disabled>
+        Activar micrófono
+    </button>
+
+    <p id="estado">Esperando conexión...</p>
+</div>
+
+<script>
+    const SERVIDOR = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
+
+    let socket;
+    let stream;
+    let audioContext;
+    let analizador;
+    let fuente;
+    let datosAudio;
+    let intervalo;
+    let hablando = false;
+
+    const estado = document.getElementById("estado");
+    const botonMicrofono = document.getElementById("microfono");
+
+    function conectar() {
+        const codigo = document.getElementById("codigo").value.trim();
+
+        if (!/^\d{6}$/.test(codigo)) {
+            estado.textContent = "Introduce un código válido.";
+            return;
+        }
+
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.close();
+        }
+
+        estado.textContent = "Conectando...";
+        botonMicrofono.disabled = true;
+
+        socket = new WebSocket(SERVIDOR);
+
+        socket.onopen = () => {
+            socket.send(JSON.stringify({
+                tipo: "unirse_sala",
+                codigo
+            }));
+        };
+
+        socket.onmessage = (evento) => {
+            const datos = JSON.parse(evento.data);
+
+            if (datos.tipo === "conectado") {
+                estado.textContent = "¡Conectada con Arnold!";
+                botonMicrofono.disabled = false;
+            }
+
+            if (datos.tipo === "error") {
+                estado.textContent = datos.mensaje;
+            }
+
+            if (datos.tipo === "desconectado") {
+                estado.textContent = "Arnold se desconectó.";
+                botonMicrofono.disabled = true;
+                detenerMicrofono();
+            }
+        };
+
+        socket.onerror = () => {
+            estado.textContent = "No se pudo conectar al servidor.";
+        };
+
+        socket.onclose = () => {
+            detenerMicrofono();
+            botonMicrofono.disabled = true;
+            estado.textContent = "Conexión cerrada.";
+        };
+    }
+
+    async function activarMicrofono() {
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: true
+            });
+
+            audioContext = new AudioContext();
+            analizador = audioContext.createAnalyser();
+            analizador.fftSize = 512;
+
+            fuente = audioContext.createMediaStreamSource(stream);
+            fuente.connect(analizador);
+
+            datosAudio = new Uint8Array(analizador.fftSize);
+
+            botonMicrofono.disabled = true;
+            estado.textContent = "Micrófono activo. ¡Puedes hablar!";
+
+            intervalo = setInterval(detectarVoz, 100);
+
+        } catch (error) {
+            estado.textContent = "No se pudo acceder al micrófono.";
+        }
+    }
+
+    function detectarVoz() {
+        if (!analizador || !socket || socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        analizador.getByteTimeDomainData(datosAudio);
+
+        let suma = 0;
+
+        for (const muestra of datosAudio) {
+            const valor = (muestra - 128) / 128;
+            suma += valor * valor;
+        }
+
+        const volumen = Math.sqrt(suma / datosAudio.length);
+        const nuevoEstado = volumen > 0.035;
+
+        if (nuevoEstado !== hablando) {
+            hablando = nuevoEstado;
+
+            socket.send(JSON.stringify({
+                tipo: "voz",
+                hablando
+            }));
+
+            estado.textContent = hablando
+                ? "¡Moni está hablando!"
+                : "Micrófono activo. En silencio.";
+        }
+    }
+
+    function detenerMicrofono() {
+        clearInterval(intervalo);
+        intervalo = null;
+
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+        }
+
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
+
+        analizador = null;
+        fuente = null;
+        datosAudio = null;
+        hablando = false;
+    }
+
+    window.addEventListener("beforeunload", detenerMicrofono);
+</script>
+</body>
+</html>

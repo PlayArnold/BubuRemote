@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BubuRemote</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: transparent;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+
+        .panel {
+            padding: 24px;
+            background: rgba(30, 30, 40, 0.96);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 18px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #ff9fc8;
+            margin-top: 0;
+        }
+
+        .estado {
+            margin: 20px 0;
+            padding: 12px;
+            border-radius: 10px;
+            background: #343444;
+        }
+
+        #punto {
+            color: #ffcc66;
+        }
+
+        .codigo {
+            display: none;
+            margin: 20px 0;
+            padding: 15px;
+            background: #252535;
+            border-radius: 12px;
+        }
+
+        #codigo {
+            color: #ff9fc8;
+            font-size: 32px;
+            font-weight: bold;
+            letter-spacing: 6px;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            margin: 7px 0;
+            border: none;
+            border-radius: 9px;
+            background: #ff75a9;
+            color: white;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #e85b91;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .secundario {
+            background: #555568;
+        }
+
+        .nota {
+            color: #aaa;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+<div class="panel">
+    <h1>BubuRemote 🐱</h1>
+    <p>Conecta a Moni con tu Bubu</p>
+
+    <div class="estado">
+        <span id="punto">●</span>
+        <span id="estado">Desconectado</span>
+    </div>
+
+    <button id="crearBtn" onclick="crearConexion()">
+        Generar código
+    </button>
+
+    <div class="codigo" id="zonaCodigo">
+        <p>Tu código de vinculación:</p>
+        <div id="codigo">------</div>
+        <p class="nota">Comparte este código con Moni.</p>
+    </div>
+
+    <button class="secundario" onclick="desconectar()">
+        Desconectar
+    </button>
+
+    <p class="nota" id="mensaje">
+        Presiona Generar código para comenzar.
+    </p>
+</div>
+
+<script>
+    const DIRECCION_SERVIDOR = "ws://localhost:3000";
+
+    let conexion = null;
+
+    const estado = document.getElementById("estado");
+    const punto = document.getElementById("punto");
+    const mensaje = document.getElementById("mensaje");
+    const zonaCodigo = document.getElementById("zonaCodigo");
+    const codigoTexto = document.getElementById("codigo");
+    const crearBtn = document.getElementById("crearBtn");
+
+    function actualizarEstado(texto, color) {
+        estado.textContent = texto;
+        punto.style.color = color;
+    }
+
+    function conectarServidor() {
+        return new Promise((resolve, reject) => {
+            if (conexion && conexion.readyState === WebSocket.OPEN) {
+                resolve();
+                return;
+            }
+
+            actualizarEstado("Conectando al servidor...", "#ffcc66");
+            crearBtn.disabled = true;
+
+            const nuevaConexion = new WebSocket(DIRECCION_SERVIDOR);
+            conexion = nuevaConexion;
+
+            nuevaConexion.onopen = () => {
+                actualizarEstado("Servidor conectado", "#65df91");
+                resolve();
+            };
+
+            nuevaConexion.onerror = () => {
+                actualizarEstado("Error de conexión", "#ff5555");
+                mensaje.textContent = "No se pudo conectar al servidor.";
+                crearBtn.disabled = false;
+                reject(new Error("No se pudo conectar"));
+            };
+
+            nuevaConexion.onclose = () => {
+                actualizarEstado("Desconectado", "#ff5555");
+                mensaje.textContent = "Conexión cerrada.";
+                crearBtn.disabled = false;
+                conexion = null;
+                zonaCodigo.style.display = "none";
+            };
+
+            nuevaConexion.onmessage = (evento) => {
+                const datos = JSON.parse(evento.data);
+
+                if (datos.tipo === "sala_creada") {
+                    codigoTexto.textContent = datos.codigo;
+                    zonaCodigo.style.display = "block";
+                    actualizarEstado("Esperando a Moni...", "#ffcc66");
+                    mensaje.textContent = "Comparte el código con Moni.";
+                }
+
+                if (datos.tipo === "cliente_conectado") {
+                    actualizarEstado("¡Moni está conectada!", "#65df91");
+                    mensaje.textContent = "Vinculación realizada correctamente.";
+                }
+
+                if (datos.tipo === "cliente_desconectado") {
+                    actualizarEstado("Moni se desconectó", "#ffcc66");
+                    mensaje.textContent = "Esperando que vuelva a conectarse.";
+                }
+
+                if (datos.tipo === "voz") {
+                    mensaje.textContent = datos.hablando
+                        ? "Bubu: Moni está hablando."
+                        : "Bubu: Moni está en silencio.";
+                }
+
+                if (datos.tipo === "error") {
+                    mensaje.textContent = datos.mensaje;
+                    crearBtn.disabled = false;
+                }
+            };
+        });
+    }
+
+    async function crearConexion() {
+        if (conexion) return;
+
+        try {
+            await conectarServidor();
+
+            if (!conexion || conexion.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            conexion.send(JSON.stringify({
+                tipo: "crear_sala"
+            }));
+
+            mensaje.textContent = "Generando código...";
+        } catch {
+            mensaje.textContent = "No se pudo crear la conexión.";
+        }
+    }
+
+    function desconectar() {
+        if (conexion) {
+            conexion.close();
+        }
+
+        zonaCodigo.style.display = "none";
+        codigoTexto.textContent = "------";
+        crearBtn.disabled = false;
+        actualizarEstado("Desconectado", "#ff5555");
+        mensaje.textContent = "Presiona Generar código para comenzar.";
+    }
+</script>
+</body>
+</html>

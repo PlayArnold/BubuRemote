@@ -1,0 +1,12 @@
+{
+  "name": "buburemote",
+  "version": "1.0.0",
+  "description": "Control remoto de Bubu",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^40.0.0"
+  }
+}
