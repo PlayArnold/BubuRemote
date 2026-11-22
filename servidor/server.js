@@ -60,6 +60,7 @@ wss.on("connection", (socket) => {
             salas.set(codigo, {
                 host: socket,
                 cliente: null,
+                monitor: null,
                 creada: Date.now()
             });
 
@@ -93,10 +94,31 @@ wss.on("connection", (socket) => {
             socket.rol = "cliente";
 
             enviar(socket, { tipo: "conectado" });
+            enviar(sala.host, { tipo: "cliente_conectado" });
 
-            enviar(sala.host, {
-                tipo: "cliente_conectado"
-            });
+            return;
+        }
+
+        if (datos.tipo === "unirse_monitor") {
+            if (socket.sala) return;
+
+            const codigo = String(datos.codigo || "");
+            const sala = salas.get(codigo);
+
+            if (!/^\d{6}$/.test(codigo) || !sala || sala.monitor) {
+                enviar(socket, {
+                    tipo: "error",
+                    mensaje: "Código incorrecto o receptor ocupado"
+                });
+                return;
+            }
+
+            sala.monitor = socket;
+            socket.sala = codigo;
+            socket.rol = "monitor";
+
+            enviar(socket, { tipo: "monitor_conectado" });
+            enviar(sala.host, { tipo: "monitor_conectado" });
 
             return;
         }
@@ -106,29 +128,39 @@ wss.on("connection", (socket) => {
 
             if (!sala || sala.cliente !== socket) return;
 
-            enviar(sala.host, {
+            const mensajeVoz = {
                 tipo: "voz",
                 hablando: datos.hablando === true
-            });
+            };
+
+            enviar(sala.host, mensajeVoz);
+            enviar(sala.monitor, mensajeVoz);
         }
     });
 
     socket.on("close", () => {
         const codigo = socket.sala;
+
         if (!codigo) return;
 
         const sala = salas.get(codigo);
+
         if (!sala) return;
 
         if (socket.rol === "host") {
             enviar(sala.cliente, { tipo: "desconectado" });
+            enviar(sala.monitor, { tipo: "desconectado" });
             salas.delete(codigo);
-        } else if (socket.rol === "cliente") {
-            sala.cliente = null;
+        }
 
-            enviar(sala.host, {
-                tipo: "cliente_desconectado"
-            });
+        if (socket.rol === "cliente") {
+            sala.cliente = null;
+            enviar(sala.host, { tipo: "cliente_desconectado" });
+        }
+
+        if (socket.rol === "monitor") {
+            sala.monitor = null;
+            enviar(sala.host, { tipo: "monitor_desconectado" });
         }
     });
 });

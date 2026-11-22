@@ -1,9 +1,11 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BubuRemote</title>
+
     <style>
         * {
             box-sizing: border-box;
@@ -88,8 +90,11 @@
         }
     </style>
 </head>
+
 <body>
+
 <div class="panel">
+
     <h1>BubuRemote 🐱</h1>
     <p>Conecta a Moni con tu Bubu</p>
 
@@ -115,10 +120,11 @@
     <p class="nota" id="mensaje">
         Presiona Generar código para comenzar.
     </p>
+
 </div>
 
 <script>
-    const DIRECCION_SERVIDOR = "ws://localhost:3000";
+    const DIRECCION_SERVIDOR = "wss://buburemote.onrender.com";
 
     let conexion = null;
 
@@ -136,6 +142,7 @@
 
     function conectarServidor() {
         return new Promise((resolve, reject) => {
+
             if (conexion && conexion.readyState === WebSocket.OPEN) {
                 resolve();
                 return;
@@ -168,13 +175,23 @@
             };
 
             nuevaConexion.onmessage = (evento) => {
-                const datos = JSON.parse(evento.data);
+
+                let datos;
+
+                try {
+                    datos = JSON.parse(evento.data);
+                } catch {
+                    return;
+                }
 
                 if (datos.tipo === "sala_creada") {
                     codigoTexto.textContent = datos.codigo;
                     zonaCodigo.style.display = "block";
+
                     actualizarEstado("Esperando a Moni...", "#ffcc66");
+
                     mensaje.textContent = "Comparte el código con Moni.";
+                    crearBtn.disabled = true;
                 }
 
                 if (datos.tipo === "cliente_conectado") {
@@ -202,6 +219,7 @@
     }
 
     async function crearConexion() {
+
         if (conexion) return;
 
         try {
@@ -216,22 +234,31 @@
             }));
 
             mensaje.textContent = "Generando código...";
-        } catch {
+
+        } catch (error) {
             mensaje.textContent = "No se pudo crear la conexión.";
+            crearBtn.disabled = false;
         }
     }
 
     function desconectar() {
+
         if (conexion) {
             conexion.close();
         }
 
+        conexion = null;
+
         zonaCodigo.style.display = "none";
         codigoTexto.textContent = "------";
+
         crearBtn.disabled = false;
+
         actualizarEstado("Desconectado", "#ff5555");
+
         mensaje.textContent = "Presiona Generar código para comenzar.";
     }
 </script>
+
 </body>
 </html>
