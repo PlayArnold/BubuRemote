@@ -93,16 +93,15 @@
     <p id="estado">Esperando conexión...</p>
 </div>
 
+
 <script>
     const SERVIDOR = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
 
     let socket;
     let stream;
     let audioContext;
-    let analizador;
     let fuente;
-    let datosAudio;
-    let intervalo;
+    let nodoVoz;
     let hablando = false;
 
     const estado = document.getElementById("estado");
@@ -164,63 +163,119 @@
 
     async function activarMicrofono() {
         try {
+            if (audioContext) {
+                await detenerMicrofono();
+            }
+
             stream = await navigator.mediaDevices.getUserMedia({
                 audio: true
             });
 
             audioContext = new AudioContext();
-            analizador = audioContext.createAnalyser();
-            analizador.fftSize = 512;
+
+            await audioContext.resume();
+
+            const codigoProcesador = `
+                class DetectorVoz extends AudioWorkletProcessor {
+                    constructor() {
+                        super();
+                        this.hablando = false;
+                    }
+
+                    process(inputs, outputs) {
+                        const entrada = inputs[0];
+
+                        if (entrada && entrada[0]) {
+                            const muestras = entrada[0];
+                            let suma = 0;
+
+                            for (let i = 0; i < muestras.length; i++) {
+                                suma += muestras[i] * muestras[i];
+                            }
+
+                            const volumen = Math.sqrt(suma / muestras.length);
+                            const nuevoEstado = volumen > 0.035;
+
+                            if (nuevoEstado !== this.hablando) {
+                                this.hablando = nuevoEstado;
+                                this.port.postMessage(this.hablando);
+                            }
+                        }
+
+                        for (const salida of outputs) {
+                            for (const canal of salida) {
+                                canal.fill(0);
+                            }
+                        }
+
+                        return true;
+                    }
+                }
+
+                registerProcessor("detector-voz", DetectorVoz);
+            `;
+
+            const blob = new Blob([codigoProcesador], {
+                type: "application/javascript"
+            });
+
+            const url = URL.createObjectURL(blob);
+
+            await audioContext.audioWorklet.addModule(url);
+
+            URL.revokeObjectURL(url);
 
             fuente = audioContext.createMediaStreamSource(stream);
-            fuente.connect(analizador);
 
-            datosAudio = new Uint8Array(analizador.fftSize);
+            nodoVoz = new AudioWorkletNode(audioContext, "detector-voz", {
+                numberOfInputs: 1,
+                numberOfOutputs: 1,
+                outputChannelCount: [1]
+            });
+
+            nodoVoz.port.onmessage = (evento) => {
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+
+                hablando = evento.data;
+
+                socket.send(JSON.stringify({
+                    tipo: "voz",
+                    hablando
+                }));
+
+                estado.textContent = hablando
+                    ? "¡Moni está hablando!"
+                    : "Micrófono activo. En silencio.";
+            };
+
+            fuente.connect(nodoVoz);
+            nodoVoz.connect(audioContext.destination);
 
             botonMicrofono.disabled = true;
             estado.textContent = "Micrófono activo. ¡Puedes hablar!";
 
-            intervalo = setInterval(detectarVoz, 100);
-
         } catch (error) {
-            estado.textContent = "No se pudo acceder al micrófono.";
+            console.error("Error al activar el micrófono:", error);
+
+            await detenerMicrofono();
+
+            estado.textContent = "No se pudo activar el micrófono.";
         }
     }
 
-    function detectarVoz() {
-        if (!analizador || !socket || socket.readyState !== WebSocket.OPEN) {
-            return;
+    async function detenerMicrofono() {
+        if (nodoVoz) {
+            nodoVoz.port.onmessage = null;
+            nodoVoz.disconnect();
+            nodoVoz = null;
         }
 
-        analizador.getByteTimeDomainData(datosAudio);
-
-        let suma = 0;
-
-        for (const muestra of datosAudio) {
-            const valor = (muestra - 128) / 128;
-            suma += valor * valor;
+        if (fuente) {
+            fuente.disconnect();
+            fuente = null;
         }
-
-        const volumen = Math.sqrt(suma / datosAudio.length);
-        const nuevoEstado = volumen > 0.035;
-
-        if (nuevoEstado !== hablando) {
-            hablando = nuevoEstado;
-
-            socket.send(JSON.stringify({
-                tipo: "voz",
-                hablando
-            }));
-
-            estado.textContent = hablando
-                ? "¡Moni está hablando!"
-                : "Micrófono activo. En silencio.";
-        }
-    }
-
-    function detenerMicrofono() {
-        clearInterval(intervalo);
-        intervalo = null;
 
         if (stream) {
             stream.getTracks().forEach(track => track.stop());
@@ -228,13 +283,14 @@
         }
 
         if (audioContext) {
-            audioContext.close();
+            const contextoAnterior = audioContext;
             audioContext = null;
+
+            if (contextoAnterior.state !== "closed") {
+                await contextoAnterior.close();
+            }
         }
 
-        analizador = null;
-        fuente = null;
-        datosAudio = null;
         hablando = false;
     }
 
