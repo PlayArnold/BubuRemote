@@ -105,6 +105,12 @@ wss.on("connection", (socket) => {
             const codigo = String(datos.codigo || "");
             const sala = salas.get(codigo);
 
+            console.log("[MONITOR]", {
+                codigoValido: /^\d{6}$/.test(codigo),
+                salaEncontrada: Boolean(sala),
+                monitorOcupado: Boolean(sala?.monitor)
+            });
+
             if (!/^\d{6}$/.test(codigo) || !sala || sala.monitor) {
                 enviar(socket, {
                     tipo: "error",
